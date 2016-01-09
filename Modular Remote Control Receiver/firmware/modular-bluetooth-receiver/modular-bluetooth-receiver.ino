@@ -38,6 +38,10 @@
 
 
 
+#include <EEPROM.h>
+
+
+
 /*------------------------------------------------------------------------------
 
   Override core timers
@@ -112,9 +116,6 @@ int pwmA = 0;
 // Motor control B
 #define mcPin1B 3
 #define mcPin2B 4
-#define maxB 28
-char levelB = 0;
-int pwmB = 0;
 
 // Channel A commands
 #define maskA 83
@@ -140,6 +141,7 @@ int pwmB = 0;
 #define baudRate 9600
 
 // Miscellanious
+#define levelAddr 0
 char incomingByte = 0;
 char maskedByte = 0;
 int pwmLevels[29] = {0, 41,  49,  57,  64, \
@@ -154,6 +156,7 @@ int pwmLevels[29] = {0, 41,  49,  57,  64, \
 void comboMode(const char,      char*, const char, const char, \
                const char, const char, const char, const char, \
                const char, const char, const char, const char);
+void directLight(const char, const char, const char);
 
 
 
@@ -178,8 +181,7 @@ void setup()
   // channel B init
   pinMode(mcPin1B, OUTPUT);
   pinMode(mcPin2B, OUTPUT);
-  digitalWrite(mcPin1B, HIGH);
-  digitalWrite(mcPin2B, HIGH);
+  directLight(EEPROM.read(levelAddr), mcPin1B, mcPin2B);
 }
 
 
@@ -204,14 +206,14 @@ void loop()
     if (incomingByte & 128) // 1xxx xxxx
     {
       // select proper output: x0xx xxxx -> A / x1xx xxxx -> B
-      char* levelX = incomingByte & 64 ? &levelB : &levelA;
+      char* levelX = incomingByte & 64 ? &levelA : &levelA;
       if ((incomingByte & 63) == 0) // xx00 0000 -> float
       {
         // set the level
         *levelX = 0;
         // set the motor control wires
-        digitalWrite(incomingByte & 64 ? mcPin1B : mcPin1A, HIGH);
-        digitalWrite(incomingByte & 64 ? mcPin2B : mcPin2A, HIGH);
+        digitalWrite(incomingByte & 64 ? mcPin1A : mcPin1A, HIGH);
+        digitalWrite(incomingByte & 64 ? mcPin2A : mcPin2A, HIGH);
       }
       // xx01 1110, xx01 1111, xx10 0001, xx10 0010  are reserved
       else if ((incomingByte & 63) < 29 || (incomingByte & 63) > 35)
@@ -225,8 +227,8 @@ void loop()
         // set the level
         *levelX = 0;
         // set the motor control wires
-        digitalWrite(incomingByte & 64 ? mcPin1B : mcPin1A, LOW);
-        digitalWrite(incomingByte & 64 ? mcPin2B : mcPin2A, LOW);
+        digitalWrite(incomingByte & 64 ? mcPin1A : mcPin1A, LOW);
+        digitalWrite(incomingByte & 64 ? mcPin2A : mcPin2A, LOW);
       }
       // notify sender
       Serial.write(*levelX);
@@ -239,30 +241,23 @@ void loop()
       comboMode(incomingByte, &levelA, maxA, maskA, brakeA, floatA, \
                   upA, downA, ffwdA, frevA, mcPin1A, mcPin2A);
       // set channel B
-      comboMode(incomingByte, &levelB, maxB, maskB, brakeB, floatB, \
-                  upB, downB, ffwdB, frevB, mcPin1B, mcPin2B);
+      comboMode(incomingByte, &levelA, maxA, maskB, brakeB, floatB, \
+                  upB, downB, ffwdB, frevB, mcPin1A, mcPin2A);
       // notify sender
-      maskedByte = abs(levelB >> 2) + (levelB < 0 ? 8 : 0);
       maskedByte = (maskedByte << 4) + abs(levelA >> 2) + (levelA < 0 ? 8 : 0);
       Serial.write(maskedByte);
     }
 
     // set the pwm
     pwmA = pwmLevels[min(abs(levelA), maxA)];
-    pwmB = pwmLevels[min(abs(levelB), maxB)];
 
     if (pwmA > 0)
     {
       // set the motor control wires (LOW input is HIGH output)
       analogWrite(mcPin1A, (levelA > 0 ? (255 - pwmA) : 255));
       analogWrite(mcPin2A, (levelA < 0 ? (255 - pwmA) : 255));
-    }
-
-    if (pwmB > 0)
-    {
-      // set the motor control wires (LOW input is HIGH output)
-      analogWrite(mcPin1B, (levelB > 0 ? (255 - pwmB) : 255));
-      analogWrite(mcPin2B, (levelB < 0 ? (255 - pwmB) : 255));
+      // set the light control wires
+      directLight(levelA, mcPin1B, mcPin2B);
     }
   }
 }
@@ -339,6 +334,22 @@ void comboMode(const char incomingByte,      char*  levelX, const char    maxX, 
   }
 
   // motor control wires set at end of input handling for non-stopped levels
+}
+
+
+
+/*------------------------------------------------------------------------------
+
+  directional lighting handler
+
+------------------------------------------------------------------------------*/
+
+
+
+void directLight(const char level, const char mcPin1X, const char mcPin2X) {
+  digitalWrite(mcPin1X, (level > 0 ? HIGH : LOW));
+  digitalWrite(mcPin2X, (level < 0 ? HIGH : LOW));
+  EEPROM.write(levelAddr, level);
 }
 
 
